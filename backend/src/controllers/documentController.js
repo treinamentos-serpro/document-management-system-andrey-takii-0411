@@ -1,13 +1,14 @@
 const documentService = require('../services/documentService');
+const documentPresenter = require('./documentPresenter');
 
 async function upload(req, res) {
   const document = await documentService.createDocument(req.file, req.owner);
-  res.status(201).json(documentService.toPublicDocument(document));
+  res.status(201).json(documentPresenter.toPublicDocument(document));
 }
 
 function list(req, res) {
   const documents = documentService.listDocuments(req.owner);
-  res.json(documents.map(documentService.toPublicDocument));
+  res.json(documents.map(documentPresenter.toPublicDocument));
 }
 
 function download(req, res, next) {

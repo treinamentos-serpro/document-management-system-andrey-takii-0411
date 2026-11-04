@@ -15,6 +15,22 @@ function errorHandler(error, _req, res, next) {
     });
   }
 
+  if (error.name === 'DocumentError') {
+    const statusByCode = {
+      FILE_REQUIRED: 400,
+      DOCUMENT_NOT_FOUND: 404,
+    };
+    const status = statusByCode[error.code] || 500;
+    const isKnownError = status !== 500;
+
+    return res.status(status).json({
+      error: {
+        code: isKnownError ? error.code : 'INTERNAL_ERROR',
+        message: isKnownError ? error.message : 'Erro interno do servidor.',
+      },
+    });
+  }
+
   if (error.status && error.code) {
     return res.status(error.status).json({
       error: { code: error.code, message: error.message },

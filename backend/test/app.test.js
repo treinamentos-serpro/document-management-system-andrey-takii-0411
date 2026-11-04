@@ -1,5 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { once } = require('node:events');
+
+const storageDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'dms-api-test-'));
+process.env.STORAGE_DIR = storageDir;
+
 const app = require('../src/app');
 const documentPresenter = require('../src/controllers/documentPresenter');
 const documentService = require('../src/services/documentService');
@@ -47,4 +56,63 @@ test('o service não encontra documentos inexistentes', () => {
     () => documentService.getDocumentForDownload('inexistente', 'usuario-1'),
     (error) => error.code === 'DOCUMENT_NOT_FOUND' && error.status === undefined,
   );
+});
+
+test('upload, listagem e download funcionam pela API HTTP', async () => {
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const fileContent = 'conteudo de teste do DMS';
+    const formData = new FormData();
+    formData.append('file', new Blob([fileContent], { type: 'text/plain' }), 'relatorio.txt');
+
+    const uploadResponse = await fetch(`${baseUrl}/upload`, {
+      method: 'POST',
+      headers: { 'X-User-Id': 'usuario-teste' },
+      body: formData,
+    });
+    assert.strictEqual(uploadResponse.status, 201);
+
+    const uploadedDocument = await uploadResponse.json();
+    assert.strictEqual(uploadedDocument.originalName, 'relatorio.txt');
+    assert.strictEqual(uploadedDocument.size, Buffer.byteLength(fileContent));
+    assert.strictEqual(uploadedDocument.owner, 'usuario-teste');
+    assert.strictEqual(Object.hasOwn(uploadedDocument, 'storageName'), false);
+
+    const storedFiles = await fs.readdir(storageDir);
+    assert.strictEqual(storedFiles.length, 1);
+    assert.strictEqual(await fs.readFile(path.join(storageDir, storedFiles[0]), 'utf8'), fileContent);
+
+    const listResponse = await fetch(`${baseUrl}/documents`, {
+      headers: { 'X-User-Id': 'usuario-teste' },
+    });
+    assert.strictEqual(listResponse.status, 200);
+    assert.deepStrictEqual(await listResponse.json(), [uploadedDocument]);
+
+    const otherUserListResponse = await fetch(`${baseUrl}/documents`, {
+      headers: { 'X-User-Id': 'outro-usuario' },
+    });
+    assert.strictEqual(otherUserListResponse.status, 200);
+    assert.deepStrictEqual(await otherUserListResponse.json(), []);
+
+    const downloadResponse = await fetch(
+      `${baseUrl}/documents/${uploadedDocument.id}/download`,
+      { headers: { 'X-User-Id': 'usuario-teste' } },
+    );
+    assert.strictEqual(downloadResponse.status, 200);
+    assert.strictEqual(await downloadResponse.text(), fileContent);
+
+    const forbiddenDownloadResponse = await fetch(
+      `${baseUrl}/documents/${uploadedDocument.id}/download`,
+      { headers: { 'X-User-Id': 'outro-usuario' } },
+    );
+    assert.strictEqual(forbiddenDownloadResponse.status, 404);
+  } finally {
+    await new Promise((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    await fs.rm(storageDir, { recursive: true, force: true });
+  }
 });
